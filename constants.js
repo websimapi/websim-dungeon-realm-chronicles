@@ -18,3 +18,4 @@ export const ENEMY_TYPES = {
 
 export const TURBO_MAX = 100;
 export const TURBO_CHARGE_RATE = 0.1; // Per frame
+export const MAGIC_COOLDOWN = 3000; // ms

@@ -1,7 +1,7 @@
 import { ASSETS } from './assets.js';
 import { Renderer } from './renderer.js';
 import nipplejs from 'nipplejs';
-import { TILE_SIZE, CLASSES, ENEMY_TYPES, MAP_SIZE, TURBO_MAX, TURBO_CHARGE_RATE } from './constants.js';
+import { TILE_SIZE, CLASSES, ENEMY_TYPES, MAP_SIZE, TURBO_MAX, TURBO_CHARGE_RATE, MAGIC_COOLDOWN } from './constants.js';
 import { audio } from './audio_manager.js';
 
 // --- Global State ---
@@ -18,7 +18,8 @@ let gameState = {
     projectiles: [],
     generators: [],
     effects: [],
-    lastTime: 0
+    lastTime: 0,
+    turboOn: false
 };
 
 // --- Initialization ---
@@ -77,24 +78,34 @@ function setupNetworking() {
 
 function setupInputs() {
     window.addEventListener('keydown', (e) => {
+        if (e.repeat) return;
         gameState.keys[e.code] = true;
         if (e.code === 'Space') performAttack();
+        if (e.code === 'KeyE') useMagic();
+        if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') gameState.turboOn = true;
     });
-    window.addEventListener('keyup', (e) => gameState.keys[e.code] = false);
+    window.addEventListener('keyup', (e) => {
+        gameState.keys[e.code] = false;
+        if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') gameState.turboOn = false;
+    });
 
-    // Mobile
-    if (/Mobi|Android/i.test(navigator.userAgent)) {
+    // Detect Mobile
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    if (isMobile) {
         document.getElementById('mobile-controls').classList.remove('hidden');
+        document.getElementById('ctrl-desktop').style.display = 'none'; // Hide desktop instructions
+        
         const manager = nipplejs.create({
             zone: document.getElementById('nipple-zone'),
             mode: 'static',
             position: { left: '50%', top: '50%' },
-            color: 'white'
+            color: 'white',
+            size: 100
         });
 
         manager.on('move', (evt, data) => {
             if (data.vector) {
-                // Simulate WASD based on vector
                 gameState.keys['KeyW'] = data.vector.y > 0.3;
                 gameState.keys['KeyS'] = data.vector.y < -0.3;
                 gameState.keys['KeyA'] = data.vector.x < -0.3;
@@ -109,9 +120,22 @@ function setupInputs() {
              gameState.keys['KeyD'] = false;
         });
 
-        document.getElementById('btn-attack').addEventListener('touchstart', (e) => { e.preventDefault(); performAttack(); });
-        document.getElementById('btn-turbo').addEventListener('touchstart', (e) => { e.preventDefault(); activateTurbo(); });
-        document.getElementById('btn-magic').addEventListener('touchstart', (e) => { e.preventDefault(); usePotion(); });
+        const btnAttack = document.getElementById('btn-attack');
+        const btnTurbo = document.getElementById('btn-turbo');
+        const btnMagic = document.getElementById('btn-magic');
+
+        const bindTouch = (elem, startFn, endFn) => {
+            elem.addEventListener('touchstart', (e) => { e.preventDefault(); if(startFn) startFn(); });
+            if(endFn) elem.addEventListener('touchend', (e) => { e.preventDefault(); endFn(); });
+        };
+
+        bindTouch(btnAttack, performAttack);
+        bindTouch(btnTurbo, () => gameState.turboOn = true, () => gameState.turboOn = false);
+        bindTouch(btnMagic, useMagic);
+    } else {
+        // Is Desktop
+        document.getElementById('desktop-controls-hint').classList.remove('hidden');
+        document.getElementById('ctrl-mobile').style.display = 'none';
     }
 }
 
@@ -134,6 +158,7 @@ window.selectClass = (className) => {
         level: 1,
         sprite: className,
         lastAttack: 0,
+        lastMagic: 0,
         flash: 0,
         dead: false
     };
@@ -157,6 +182,27 @@ window.respawn = () => {
     document.getElementById('game-over-screen').classList.add('hidden');
     room.updatePresence(p);
 };
+
+function useMagic() {
+    if (!gameState.localPlayer || gameState.localPlayer.dead) return;
+    const p = gameState.localPlayer;
+    const now = Date.now();
+    
+    if (now - (p.lastMagic || 0) < MAGIC_COOLDOWN) return;
+    p.lastMagic = now;
+
+    // Magic Effect: Radial Blast
+    audio.play('magic', false, 1.2);
+    
+    // Send event
+    room.send({
+        type: 'magic_blast',
+        id: room.clientId,
+        x: p.x,
+        y: p.y,
+        damage: 50 // High damage
+    });
+}
 
 function performAttack() {
     if (!gameState.localPlayer || gameState.localPlayer.dead) return;
@@ -204,12 +250,20 @@ function updatePhysics(dt) {
     const stats = CLASSES[p.class];
     let dx = 0;
     let dy = 0;
-    const speed = stats.speed * dt * 4; // Tuning
+    // Turbo Logic
+    let currentSpeed = stats.speed * dt * 4; // Tuning
+    if (gameState.turboOn && p.turbo > 0) {
+        currentSpeed *= 1.6; // 60% boost
+        p.turbo = Math.max(0, p.turbo - dt * 30); // Drain
+    } else {
+        // Regen Turbo
+        if (p.turbo < TURBO_MAX) p.turbo += TURBO_CHARGE_RATE;
+    }
 
-    if (gameState.keys['KeyW'] || gameState.keys['ArrowUp']) { dx -= speed; dy -= speed; }
-    if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) { dx += speed; dy += speed; }
-    if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) { dx -= speed; dy += speed; }
-    if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) { dx += speed; dy -= speed; }
+    if (gameState.keys['KeyW'] || gameState.keys['ArrowUp']) { dx -= currentSpeed; dy -= currentSpeed; }
+    if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) { dx += currentSpeed; dy += currentSpeed; }
+    if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) { dx -= currentSpeed; dy += currentSpeed; }
+    if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) { dx += currentSpeed; dy -= currentSpeed; }
 
     // Collision Check (Simple bounds)
     const newX = p.x + dx;
@@ -222,9 +276,6 @@ function updatePhysics(dt) {
             p.y = newY;
         }
     }
-
-    // Regen Turbo
-    if (p.turbo < TURBO_MAX) p.turbo += TURBO_CHARGE_RATE;
 
     // Update UI
     document.getElementById('p-hp-text').innerText = `${Math.ceil(p.hp)}/${p.maxHp}`;
@@ -326,6 +377,26 @@ room.subscribePresenceUpdateRequests((req, fromId) => {
 
 room.onmessage = (evt) => {
     const data = evt.data;
+    if (data.type === 'magic_blast') {
+        // Visual for magic (could be a particle effect, for now just logic)
+        // If Host: Calculate AOE damage
+        const peers = Object.keys(room.peers).sort();
+        if (peers[0] === room.clientId) {
+            let enemies = gameState.enemies || {};
+            let hit = false;
+            Object.values(enemies).forEach(e => {
+                const dist = Math.hypot(e.x - data.x, e.y - data.y);
+                if (dist < 8) { // Large Radius
+                    e.hp -= data.damage;
+                    e.flash = 1.0;
+                    hit = true;
+                    if (e.hp <= 0) delete enemies[e.id];
+                }
+            });
+            if (hit) room.updateRoomState({ enemies });
+        }
+    }
+
     if (data.type === 'attack') {
         // Visual effect
         // If Host: Calculate damage to enemies
