@@ -1,7 +1,7 @@
 import { ASSETS } from './assets.js';
 import { Renderer } from './renderer.js';
 import nipplejs from 'nipplejs';
-import { TILE_SIZE, CLASSES, ENEMY_TYPES, MAP_SIZE, TURBO_MAX, TURBO_CHARGE_RATE, MAGIC_COOLDOWN, ATTACK_DURATION } from './constants.js';
+import { TILE_SIZE, CLASSES, ENEMY_TYPES, MAP_SIZE, TURBO_MAX, TURBO_CHARGE_RATE, MAGIC_COOLDOWN, ATTACK_DURATION, ENEMY_ATTACK_COOLDOWN } from './constants.js';
 import { audio } from './audio_manager.js';
 
 // --- Global State ---
@@ -31,7 +31,7 @@ async function init() {
     await renderer.loadImages(ASSETS);
     await room.initialize();
     
-    // Generate static map (pseudorandom but same for everyone based on coords)
+    // Generate static map (Deterministic)
     generateMap();
 
     setupInputs();
@@ -44,11 +44,26 @@ async function init() {
 }
 
 function generateMap() {
-    // Simple room generation
+    // Simple room generation with seeded randomness for consistency across clients
     gameState.map = Array(MAP_SIZE).fill(0).map(() => Array(MAP_SIZE).fill(0));
+    
+    // Simple LCG Seeding
+    let seed = 12345;
+    const random = () => {
+        seed = (seed * 9301 + 49297) % 233280;
+        return seed / 233280;
+    };
+
     for(let y=5; y<MAP_SIZE-5; y++) {
         for(let x=5; x<MAP_SIZE-5; x++) {
-            if (Math.random() > 0.1) gameState.map[y][x] = 1;
+            if (random() > 0.1) gameState.map[y][x] = 1;
+        }
+    }
+    
+    // Ensure spawn area is clear
+    for(let y=10; y<15; y++) {
+        for(let x=10; x<15; x++) {
+            gameState.map[y][x] = 1;
         }
     }
 }
@@ -348,29 +363,54 @@ function updatePhysics(dt) {
         }
     }
 
-    // Collision Check - Independent Axes for Sliding
+    // Collision Check - Independent Axes for Sliding with Corner Assist
+    
+    const checkCollision = (x, y) => {
+        const tX = Math.floor(x);
+        const tY = Math.floor(y);
+        if (tX < 0 || tX >= MAP_SIZE || tY < 0 || tY >= MAP_SIZE) return true; // Blocked (Out of bounds)
+        // 1 is floor (walkable), 0 is wall (blocked)
+        // If map[tY] exists and map[tY][tX] is 1, it is safe. Otherwise blocked.
+        return !(gameState.map[tY] && gameState.map[tY][tX] === 1);
+    };
+
     // X Axis
     let nextX = p.x + dx;
-    if (nextX > 0 && nextX < MAP_SIZE) {
-        const tX = Math.floor(nextX);
-        const tY = Math.floor(p.y);
-        if (gameState.map[tY] && gameState.map[tY][tX] === 1) {
-            p.x = nextX;
-        } else {
-            gameState.targetMove = null;
+    if (!checkCollision(nextX, p.y)) {
+        p.x = nextX;
+    } else {
+        // Wall Slide / Corner Assist for X movement
+        // If we are stuck moving X, check if we can slide Y to align with a gap
+        // If p.y is close to a tile boundary (e.g. 10.1 or 10.9) and the diagonal tile is free
+        const fractY = p.y - Math.floor(p.y);
+        if (fractY < 0.3) {
+            // We are near top of tile, check if moving UP helps (align to top tile)
+            if (!checkCollision(nextX, p.y - 0.4)) dy -= currentSpeed * 0.5;
+        } else if (fractY > 0.7) {
+            // We are near bottom of tile, check if moving DOWN helps
+            if (!checkCollision(nextX, p.y + 0.4)) dy += currentSpeed * 0.5;
         }
+        gameState.targetMove = null;
     }
 
     // Y Axis
     let nextY = p.y + dy;
-    if (nextY > 0 && nextY < MAP_SIZE) {
-        const tX = Math.floor(p.x);
-        const tY = Math.floor(nextY);
-        if (gameState.map[tY] && gameState.map[tY][tX] === 1) {
-            p.y = nextY;
-        } else {
-            gameState.targetMove = null;
+    // Note: Use updated p.x from X-step or original?
+    // Independent axis usually implies using updated p.x for Y check can cause "sticky" feeling on corners
+    // But it also prevents entering walls. 
+    // We will use current p.x (which might be updated).
+    
+    if (!checkCollision(p.x, nextY)) {
+        p.y = nextY;
+    } else {
+        // Wall Slide / Corner Assist for Y movement
+        const fractX = p.x - Math.floor(p.x);
+        if (fractX < 0.3) {
+            if (!checkCollision(p.x - 0.4, nextY)) dx -= currentSpeed * 0.5;
+        } else if (fractX > 0.7) {
+            if (!checkCollision(p.x + 0.4, nextY)) dx += currentSpeed * 0.5;
         }
+        gameState.targetMove = null;
     }
 
     // Update UI
@@ -443,8 +483,13 @@ function updateHostLogic() {
             }
 
             // Attack logic...
-             if (len < 1.0) {
-                 room.requestPresenceUpdate(target.id, { type: 'damage', amount: 1 });
+            const now = Date.now();
+            if (len < 1.0) {
+                 if (now - (enemy.lastAttack || 0) > ENEMY_ATTACK_COOLDOWN) {
+                     enemy.lastAttack = now;
+                     // Trigger attack animation state for enemy? (Not implemented in view, but logic holds)
+                     room.requestPresenceUpdate(target.id, { type: 'damage', amount: 10 }); // Increased damage but slower hit
+                 }
             }
         }
 
