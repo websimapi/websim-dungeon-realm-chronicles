@@ -445,7 +445,9 @@ function updateHostLogic() {
             hp: 30,
             maxHp: 30,
             sprite: Math.random() > 0.3 ? 'goblin' : 'skeleton',
-            flash: 0
+            flash: 0,
+            knockbackVX: 0,
+            knockbackVY: 0
         };
         stateUpdates.enemies = enemies;
     }
@@ -470,7 +472,22 @@ function updateHostLogic() {
             }
         });
 
-        // Movement
+        // Apply knockback first (if any)
+        if (enemy.knockbackVX || enemy.knockbackVY) {
+            enemy.x += enemy.knockbackVX;
+            enemy.y += enemy.knockbackVY;
+
+            const damp = 0.9;
+            enemy.knockbackVX *= damp;
+            enemy.knockbackVY *= damp;
+
+            if (Math.hypot(enemy.knockbackVX, enemy.knockbackVY) < 0.005) {
+                enemy.knockbackVX = 0;
+                enemy.knockbackVY = 0;
+            }
+        }
+
+        // Movement toward target
         if (target && minDist < 20) { // Aggro range
             const dx = target.x - enemy.x;
             const dy = target.y - enemy.y;
@@ -549,6 +566,17 @@ room.onmessage = (evt) => {
                     e.hp -= data.damage;
                     e.flash = 1.0;
                     hit = true;
+
+                    // Knockback away from blast center
+                    const dx = e.x - data.x;
+                    const dy = e.y - data.y;
+                    const len = Math.hypot(dx, dy) || 1;
+                    const kbStrength = 0.4;
+                    const nx = dx / len;
+                    const ny = dy / len;
+                    e.knockbackVX = (e.knockbackVX || 0) + nx * kbStrength;
+                    e.knockbackVY = (e.knockbackVY || 0) + ny * kbStrength;
+
                     if (e.hp <= 0) delete enemies[e.id];
                 }
             });
@@ -584,6 +612,20 @@ room.onmessage = (evt) => {
                     e.hp -= data.damage;
                     e.flash = 1.0;
                     hit = true;
+
+                    // Knockback in attack direction (convert screen angle to grid direction)
+                    const sx = Math.cos(data.angle);
+                    const sy = Math.sin(data.angle);
+                    // From iso projection: gx = (sx + sy) / 2, gy = (sy - sx) / 2
+                    let gx = (sx + sy) / 2;
+                    let gy = (sy - sx) / 2;
+                    const glen = Math.hypot(gx, gy) || 1;
+                    gx /= glen;
+                    gy /= glen;
+                    const kbStrength = 0.5;
+                    e.knockbackVX = (e.knockbackVX || 0) + gx * kbStrength;
+                    e.knockbackVY = (e.knockbackVY || 0) + gy * kbStrength;
+
                     if (e.hp <= 0) delete enemies[e.id];
                 }
             });
