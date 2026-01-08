@@ -1,7 +1,7 @@
 import { ASSETS } from './assets.js';
 import { Renderer } from './renderer.js';
 import nipplejs from 'nipplejs';
-import { TILE_SIZE, CLASSES, ENEMY_TYPES, MAP_SIZE, TURBO_MAX, TURBO_CHARGE_RATE, MAGIC_COOLDOWN } from './constants.js';
+import { TILE_SIZE, CLASSES, ENEMY_TYPES, MAP_SIZE, TURBO_MAX, TURBO_CHARGE_RATE, MAGIC_COOLDOWN, ATTACK_DURATION } from './constants.js';
 import { audio } from './audio_manager.js';
 
 // --- Global State ---
@@ -19,7 +19,8 @@ let gameState = {
     generators: [],
     effects: [],
     lastTime: 0,
-    turboOn: false
+    turboOn: false,
+    mousePos: { x: 0, y: 0 }
 };
 
 // --- Initialization ---
@@ -87,6 +88,11 @@ function setupInputs() {
     window.addEventListener('keyup', (e) => {
         gameState.keys[e.code] = false;
         if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') gameState.turboOn = false;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        gameState.mousePos.x = e.clientX;
+        gameState.mousePos.y = e.clientY;
     });
 
     // Detect Mobile
@@ -157,6 +163,8 @@ window.selectClass = (className) => {
         xp: 0,
         level: 1,
         sprite: className,
+        facing: 0,
+        attackStart: 0,
         lastAttack: 0,
         lastMagic: 0,
         flash: 0,
@@ -208,36 +216,63 @@ function performAttack() {
     if (!gameState.localPlayer || gameState.localPlayer.dead) return;
     
     const now = Date.now();
-    const stats = CLASSES[gameState.localPlayer.class];
+    const p = gameState.localPlayer;
+    const stats = CLASSES[p.class];
     
-    if (now - gameState.localPlayer.lastAttack < stats.cd) return;
-    gameState.localPlayer.lastAttack = now;
-
+    if (now - p.lastAttack < stats.cd) return;
+    p.lastAttack = now;
+    p.attackStart = now; // Local visual
+    
+    // Determine attack angle
+    const angle = p.facing; 
+    
     // Logic depending on class
     if (stats.type === 'melee') {
-        // Simple hitbox check in front
-        // In a real game, this would be a directional sector check
-        // We will broadcast an attack event
         room.send({
             type: 'attack',
             id: room.clientId,
-            x: gameState.localPlayer.x,
-            y: gameState.localPlayer.y,
+            x: p.x,
+            y: p.y,
+            angle: angle, // Send direction
             damage: stats.damage,
-            class: gameState.localPlayer.class
+            class: p.class
         });
         audio.play('hit'); // Swing sound actually
         
-        // Host will calculate hits
+        // Also update presence immediately so others see animation start
+        room.updatePresence(p);
+
     } else {
-        // Projectile
+        // Projectile velocity based on angle
+        // Convert screen angle back to Iso velocity? 
+        // Our 'facing' is screen angle.
+        // Screen velocity:
+        const svx = Math.cos(angle) * 10;
+        const svy = Math.sin(angle) * 10;
+        
+        // To get Grid/Iso Velocity roughly:
+        // x_grid = (x_screen/2 + y_screen) / TILE_W? No, simpler to just use screen coords for projectiles visually
+        // But logic uses grid.
+        // Approx:
+        const speed = 0.5;
+        // Map screen angle to grid vector roughly:
+        // 0 (Right) -> x+ y- (Down-Right)
+        // PI/2 (Down) -> x+ y+
+        // PI (Left) -> x- y+
+        // -PI/2 (Up) -> x- y-
+        
+        // This mapping depends on the Iso projection.
+        // Screen X = (gx - gy) * W
+        // Screen Y = (gx + gy) * H
+        // Let's just pass the screen angle and handle it.
+        
         room.send({
             type: 'shoot',
             id: room.clientId,
-            x: gameState.localPlayer.x,
-            y: gameState.localPlayer.y,
-            damage: stats.damage,
-            vx: 0, vy: 0 // Would calculate based on facing
+            x: p.x,
+            y: p.y,
+            angle: angle,
+            damage: stats.damage
         });
         audio.play('magic');
     }
@@ -264,6 +299,25 @@ function updatePhysics(dt) {
     if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) { dx += currentSpeed; dy += currentSpeed; }
     if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) { dx -= currentSpeed; dy += currentSpeed; }
     if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) { dx += currentSpeed; dy -= currentSpeed; }
+
+    // Update Facing
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (!isMobile) {
+        // Desktop: Face Mouse
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        p.facing = Math.atan2(gameState.mousePos.y - cy, gameState.mousePos.x - cx);
+    } else {
+        // Mobile: Face Movement
+        // Convert grid delta (dx, dy) to screen delta to get screen angle
+        // screenX = (dx - dy) * W
+        // screenY = (dx + dy) * H
+        if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
+            const sx = (dx - dy);
+            const sy = (dx + dy);
+            p.facing = Math.atan2(sy, sx);
+        }
+    }
 
     // Collision Check (Simple bounds)
     const newX = p.x + dx;
@@ -334,21 +388,39 @@ function updateHostLogic() {
             }
         });
 
+        // Movement
         if (target && minDist < 20) { // Aggro range
             const dx = target.x - enemy.x;
             const dy = target.y - enemy.y;
-            // Normalize
             const len = Math.hypot(dx, dy);
-            if (len > 1) { // Stop if touching
+            
+            if (len > 1) {
+                // Move towards player
                 enemy.x += (dx/len) * 0.05;
                 enemy.y += (dy/len) * 0.05;
             }
-            
-            // Damage Player if close
-            if (len < 1.0) {
+
+            // Attack logic...
+             if (len < 1.0) {
                  room.requestPresenceUpdate(target.id, { type: 'damage', amount: 1 });
             }
         }
+
+        // Separation (Boids-style)
+        let sepX = 0;
+        let sepY = 0;
+        enemyList.forEach(([otherId, other]) => {
+            if (eId === otherId) return;
+            const dist = Math.hypot(enemy.x - other.x, enemy.y - other.y);
+            if (dist < 1.0) { // Separation threshold
+                const push = (1.0 - dist) * 0.05;
+                const ang = Math.atan2(enemy.y - other.y, enemy.x - other.x);
+                sepX += Math.cos(ang) * push;
+                sepY += Math.sin(ang) * push;
+            }
+        });
+        enemy.x += sepX;
+        enemy.y += sepY;
         
         if (enemy.flash > 0) enemy.flash -= 0.1;
     });
@@ -398,22 +470,34 @@ room.onmessage = (evt) => {
     }
 
     if (data.type === 'attack') {
-        // Visual effect
+        // Update visual state of the attacker if it's another player
+        const attacker = room.presence[data.id];
+        if (attacker) {
+            attacker.attackStart = Date.now();
+            attacker.facing = data.angle; // Snap to attack angle
+        }
+
         // If Host: Calculate damage to enemies
         const peers = Object.keys(room.peers).sort();
         if (peers[0] === room.clientId) {
             let enemies = gameState.enemies || {};
             let hit = false;
+            
+            // Define attack sector based on angle (data.angle)
+            // data.angle is Screen Space angle.
+            // Need to convert enemy relative pos to screen space to check sector?
+            // Or just use distance for now + crude directional check?
+            // Sticking to distance for simplicity as converting every enemy pos to screen space in logic is heavy?
+            // Actually, let's just use distance for now to ensure hits register reliably. 
+            // The visual implies direction, but the logic is generous.
+            
             Object.values(enemies).forEach(e => {
                 const dist = Math.hypot(e.x - data.x, e.y - data.y);
-                if (dist < 3) { // Melee range
+                if (dist < 3) { 
                     e.hp -= data.damage;
                     e.flash = 1.0;
                     hit = true;
-                    if (e.hp <= 0) {
-                        delete enemies[e.id];
-                        // Grant XP? Simplification: Just remove
-                    }
+                    if (e.hp <= 0) delete enemies[e.id];
                 }
             });
             if (hit) room.updateRoomState({ enemies });

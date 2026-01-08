@@ -1,4 +1,4 @@
-import { TILE_SIZE, ISO_WIDTH, ISO_HEIGHT, MAP_SIZE } from './constants.js';
+import { TILE_SIZE, ISO_WIDTH, ISO_HEIGHT, MAP_SIZE, ATTACK_DURATION } from './constants.js';
 
 export class Renderer {
     constructor(canvas) {
@@ -75,6 +75,7 @@ export class Renderer {
     drawEntities(entities, localId) {
         const cx = this.canvas.width / 2 - this.camera.x;
         const cy = this.canvas.height / 2 - this.camera.y;
+        const now = Date.now();
 
         // Sort by Y for depth
         entities.sort((a, b) => a.y - b.y);
@@ -85,24 +86,45 @@ export class Renderer {
             const drawY = Math.floor(cy + iso.y);
 
             // Sprite offset to center feet
-            const spriteY = drawY - 48; 
-            const spriteX = drawX - 32;
+            const spriteY = -48; 
+            const spriteX = -32;
+
+            this.ctx.save();
+            this.ctx.translate(drawX, drawY);
 
             // Draw Shadow
             this.ctx.fillStyle = 'rgba(0,0,0,0.4)';
             this.ctx.beginPath();
-            this.ctx.ellipse(drawX, drawY + 16, 20, 10, 0, 0, Math.PI * 2);
+            this.ctx.ellipse(0, 16, 20, 10, 0, 0, Math.PI * 2);
             this.ctx.fill();
+
+            // Handling Facing (Flip)
+            // facing is angle in radians. 0 is Right, PI/2 is Down, PI is Left, -PI/2 is Up
+            const facing = ent.facing || 0;
+            const isLeft = Math.abs(facing) > Math.PI / 2;
+            
+            if (isLeft) {
+                this.ctx.scale(-1, 1);
+            }
+
+            // Attack Animation
+            const isAttacking = ent.attackStart && (now - ent.attackStart < ATTACK_DURATION);
+            let attackProgress = 0;
+            if (isAttacking) {
+                attackProgress = (now - ent.attackStart) / ATTACK_DURATION;
+                // Lunge forward slightly
+                const lunge = Math.sin(attackProgress * Math.PI) * 10;
+                this.ctx.translate(lunge, 0);
+            }
 
             // Draw Sprite
             let img = this.images[ent.sprite];
-            if (!img && ent.type === 'enemy') img = this.images.goblin; // Fallback
-            if (!img && ent.type === 'player') img = this.images.warrior; // Fallback
+            if (!img && ent.type === 'enemy') img = this.images.goblin; 
+            if (!img && ent.type === 'player') img = this.images.warrior; 
 
             if (img) {
                 // Flash white on hit
                 if (ent.flash > 0) {
-                    this.ctx.globalCompositeOperation = 'source-over';
                     this.ctx.drawImage(img, spriteX, spriteY, 64, 64);
                     this.ctx.globalCompositeOperation = 'source-atop';
                     this.ctx.fillStyle = `rgba(255,255,255,${ent.flash})`;
@@ -113,13 +135,34 @@ export class Renderer {
                 }
             }
 
-            // Health Bar (for enemies or injured players)
+            // Draw Weapon Swing Effect
+            if (isAttacking) {
+                this.ctx.save();
+                this.ctx.translate(10, -20); // Pivot point for sword
+                // Swing rotation
+                const swingAngle = (attackProgress - 0.5) * 2; // -1 to 1
+                this.ctx.rotate(swingAngle * 1.5);
+                
+                // Draw a simple "slash" effect
+                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, 40, -0.5, 0.5);
+                this.ctx.lineTo(50, 0);
+                this.ctx.fill();
+                this.ctx.restore();
+            }
+
+            this.ctx.restore(); // Restore translation/scale
+
+            // Health Bar (drawn in world space, not flipped)
             if (ent.hp < ent.maxHp) {
                 const pct = Math.max(0, ent.hp / ent.maxHp);
+                const barX = drawX - 16;
+                const barY = drawY - 60;
                 this.ctx.fillStyle = 'red';
-                this.ctx.fillRect(spriteX + 16, spriteY, 32, 4);
+                this.ctx.fillRect(barX, barY, 32, 4);
                 this.ctx.fillStyle = '#0f0';
-                this.ctx.fillRect(spriteX + 16, spriteY, 32 * pct, 4);
+                this.ctx.fillRect(barX, barY, 32 * pct, 4);
             }
 
             // Name/Indicator
@@ -127,7 +170,7 @@ export class Renderer {
                 this.ctx.font = '10px "Press Start 2P"';
                 this.ctx.fillStyle = ent.id === localId ? '#f1c40f' : 'white';
                 this.ctx.textAlign = 'center';
-                this.ctx.fillText(ent.username || 'Hero', drawX, spriteY - 5);
+                this.ctx.fillText(ent.username || 'Hero', drawX, drawY - 65);
             }
         });
     }
