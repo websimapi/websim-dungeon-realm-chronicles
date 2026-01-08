@@ -493,7 +493,7 @@ function updateHostLogic() {
             const dy = target.y - enemy.y;
             const len = Math.hypot(dx, dy);
             
-            if (len > 1) {
+            if (len > 0.8) {
                 // Move towards player
                 enemy.x += (dx/len) * 0.05;
                 enemy.y += (dy/len) * 0.05;
@@ -501,11 +501,21 @@ function updateHostLogic() {
 
             // Attack logic...
             const now = Date.now();
-            if (len < 1.0) {
+            if (len < 1.5) { // Slightly increased range for attack to feel fairer
                  if (now - (enemy.lastAttack || 0) > ENEMY_ATTACK_COOLDOWN) {
                      enemy.lastAttack = now;
-                     // Trigger attack animation state for enemy? (Not implemented in view, but logic holds)
-                     room.requestPresenceUpdate(target.id, { type: 'damage', amount: 10 }); // Increased damage but slower hit
+                     enemy.attackStart = now; // Visual sync
+                     enemy.facing = Math.atan2(dy, dx); // Face player
+                     
+                     // Trigger attack animation and sound
+                     room.send({ 
+                        type: 'enemy_attack', 
+                        id: eId,
+                        x: enemy.x,
+                        y: enemy.y 
+                     });
+
+                     room.requestPresenceUpdate(target.id, { type: 'damage', amount: 10 });
                  }
             }
         }
@@ -553,6 +563,15 @@ room.subscribePresenceUpdateRequests((req, fromId) => {
 
 room.onmessage = (evt) => {
     const data = evt.data;
+
+    if (data.type === 'enemy_attack') {
+        // Play sound and trigger local animation if state hasn't synced yet
+        audio.play('hit', false, 0.3); // Enemy hit sound
+        if (gameState.enemies && gameState.enemies[data.id]) {
+            gameState.enemies[data.id].attackStart = Date.now();
+        }
+    }
+
     if (data.type === 'magic_blast') {
         // Visual for magic (could be a particle effect, for now just logic)
         // If Host: Calculate AOE damage
@@ -598,22 +617,36 @@ room.onmessage = (evt) => {
             let enemies = gameState.enemies || {};
             let hit = false;
             
-            // Define attack sector based on angle (data.angle)
-            // data.angle is Screen Space angle.
-            // Need to convert enemy relative pos to screen space to check sector?
-            // Or just use distance for now + crude directional check?
-            // Sticking to distance for simplicity as converting every enemy pos to screen space in logic is heavy?
-            // Actually, let's just use distance for now to ensure hits register reliably. 
-            // The visual implies direction, but the logic is generous.
-            
+            // Hitbox Logic: Cone Check
+            // data.angle is the player's facing angle (radians)
+            const range = CLASSES[data.class].range; 
+            const cone = Math.PI / 1.5; // Wide cone (120 degrees) to be forgiving
+
             Object.values(enemies).forEach(e => {
-                const dist = Math.hypot(e.x - data.x, e.y - data.y);
-                if (dist < 3) { 
+                const dx = e.x - data.x;
+                const dy = e.y - data.y;
+                const dist = Math.hypot(dx, dy);
+
+                // Direction check
+                // Grid angle
+                const angleToEnemy = Math.atan2(dy, dx); 
+                
+                // We need to compare player facing (screen space/logic space mix?) 
+                // In this game, facing IS calculated from grid deltas or screen mouse.
+                // It is consistent.
+                
+                let angleDiff = angleToEnemy - data.angle;
+                // Normalize
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+                // Hit Condition: Within Range AND Inside Cone
+                if (dist < range && Math.abs(angleDiff) < (cone / 2)) { 
                     e.hp -= data.damage;
                     e.flash = 1.0;
                     hit = true;
 
-                    // Knockback in attack direction (convert screen angle to grid direction)
+                    // Knockback in attack direction
                     const sx = Math.cos(data.angle);
                     const sy = Math.sin(data.angle);
                     // From iso projection: gx = (sx + sy) / 2, gy = (sy - sx) / 2

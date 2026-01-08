@@ -116,8 +116,10 @@ export class Renderer {
             this.ctx.fill();
 
             // Handling Facing (Flip)
-            // facing is angle in radians. 0 is Right, PI/2 is Down, PI is Left, -PI/2 is Up
             const facing = ent.facing || 0;
+            // Determine if left or right based on angle
+            // 0 is Right, PI is Left.
+            // Check if facing is roughly left (90 to 270 degrees)
             const isLeft = Math.abs(facing) > Math.PI / 2;
             
             if (isLeft) {
@@ -129,9 +131,14 @@ export class Renderer {
             let attackProgress = 0;
             if (isAttacking) {
                 attackProgress = (now - ent.attackStart) / ATTACK_DURATION;
-                // Lunge forward slightly
-                const lunge = Math.sin(attackProgress * Math.PI) * 10;
+                // Lunge forward
+                const lunge = Math.sin(attackProgress * Math.PI) * 15;
                 this.ctx.translate(lunge, 0);
+                
+                // Color tint for enemy attack to make it visible
+                if (ent.type === 'enemy') {
+                     // Red tint prep handled in draw
+                }
             }
 
             // Draw Sprite
@@ -145,6 +152,13 @@ export class Renderer {
                     this.ctx.drawImage(img, spriteX, spriteY, 64, 64);
                     this.ctx.globalCompositeOperation = 'source-atop';
                     this.ctx.fillStyle = `rgba(255,255,255,${ent.flash})`;
+                    this.ctx.fillRect(spriteX, spriteY, 64, 64);
+                    this.ctx.globalCompositeOperation = 'source-over';
+                } else if (isAttacking && ent.type === 'enemy') {
+                    // Flash red on attack for enemies
+                    this.ctx.drawImage(img, spriteX, spriteY, 64, 64);
+                    this.ctx.globalCompositeOperation = 'source-atop';
+                    this.ctx.fillStyle = `rgba(255,50,50,0.5)`; // Red flash
                     this.ctx.fillRect(spriteX, spriteY, 64, 64);
                     this.ctx.globalCompositeOperation = 'source-over';
                 } else {

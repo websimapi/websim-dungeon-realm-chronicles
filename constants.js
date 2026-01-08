@@ -4,10 +4,10 @@ export const ISO_HEIGHT = 16;
 export const MAP_SIZE = 40; // 40x40 grid
 
 export const CLASSES = {
-    warrior: { hp: 200, speed: 2.5, damage: 25, type: 'melee', range: 40, cd: 500, defense: 0.4 },
-    valkyrie: { hp: 150, speed: 3.5, damage: 15, type: 'melee', range: 60, cd: 400, defense: 0.2 },
-    wizard: { hp: 80, speed: 3.0, damage: 35, type: 'ranged', range: 200, cd: 800, defense: 0.1 },
-    archer: { hp: 100, speed: 4.5, damage: 12, type: 'ranged', range: 250, cd: 300, defense: 0.1 }
+    warrior: { hp: 200, speed: 2.5, damage: 25, type: 'melee', range: 1.8, cd: 500, defense: 0.4 },
+    valkyrie: { hp: 150, speed: 3.5, damage: 15, type: 'melee', range: 2.5, cd: 400, defense: 0.2 },
+    wizard: { hp: 80, speed: 3.0, damage: 35, type: 'ranged', range: 10, cd: 800, defense: 0.1 },
+    archer: { hp: 100, speed: 4.5, damage: 12, type: 'ranged', range: 12, cd: 300, defense: 0.1 }
 };
 
 export const ENEMY_TYPES = {
