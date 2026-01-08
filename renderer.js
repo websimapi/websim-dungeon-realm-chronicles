@@ -39,6 +39,23 @@ export class Renderer {
         };
     }
 
+    screenToGrid(screenX, screenY) {
+        const cx = this.canvas.width / 2 - this.camera.x;
+        const cy = this.canvas.height / 2 - this.camera.y;
+        
+        const adjX = screenX - cx;
+        const adjY = screenY - cy;
+        
+        // Inverse of gridToIso
+        // x = (adjX / W + adjY / H) / 2
+        // y = (adjY / H - adjX / W) / 2
+        
+        const gridX = (adjX / ISO_WIDTH + adjY / ISO_HEIGHT) / 2;
+        const gridY = (adjY / ISO_HEIGHT - adjX / ISO_WIDTH) / 2;
+        
+        return { x: gridX, y: gridY };
+    }
+
     clear() {
         this.ctx.fillStyle = '#111';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);

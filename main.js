@@ -20,7 +20,8 @@ let gameState = {
     effects: [],
     lastTime: 0,
     turboOn: false,
-    mousePos: { x: 0, y: 0 }
+    mousePos: { x: 0, y: 0 },
+    targetMove: null
 };
 
 // --- Initialization ---
@@ -78,9 +79,24 @@ function setupNetworking() {
 // --- Input Handling ---
 
 function setupInputs() {
+    // Click/Tap to move
+    renderer.canvas.addEventListener('pointerdown', (e) => {
+        if (!gameState.joined || gameState.localPlayer.dead) return;
+        
+        const gridPos = renderer.screenToGrid(e.clientX, e.clientY);
+        
+        // Basic bounds check
+        if (gridPos.x >= 0 && gridPos.x < MAP_SIZE && gridPos.y >= 0 && gridPos.y < MAP_SIZE) {
+            gameState.targetMove = gridPos;
+            // Feedback
+            audio.play('coin', false, 0.2); 
+        }
+    });
+
     window.addEventListener('keydown', (e) => {
         if (e.repeat) return;
         gameState.keys[e.code] = true;
+        gameState.targetMove = null; // Key override
         if (e.code === 'Space') performAttack();
         if (e.code === 'KeyE') useMagic();
         if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') gameState.turboOn = true;
@@ -112,6 +128,7 @@ function setupInputs() {
 
         manager.on('move', (evt, data) => {
             if (data.vector) {
+                gameState.targetMove = null;
                 gameState.keys['KeyW'] = data.vector.y > 0.3;
                 gameState.keys['KeyS'] = data.vector.y < -0.3;
                 gameState.keys['KeyA'] = data.vector.x < -0.3;
@@ -285,20 +302,35 @@ function updatePhysics(dt) {
     const stats = CLASSES[p.class];
     let dx = 0;
     let dy = 0;
+    
     // Turbo Logic
-    let currentSpeed = stats.speed * dt * 4; // Tuning
+    let currentSpeed = stats.speed * dt * 4; 
     if (gameState.turboOn && p.turbo > 0) {
-        currentSpeed *= 1.6; // 60% boost
-        p.turbo = Math.max(0, p.turbo - dt * 30); // Drain
+        currentSpeed *= 1.6; 
+        p.turbo = Math.max(0, p.turbo - dt * 30); 
     } else {
-        // Regen Turbo
         if (p.turbo < TURBO_MAX) p.turbo += TURBO_CHARGE_RATE;
     }
 
-    if (gameState.keys['KeyW'] || gameState.keys['ArrowUp']) { dx -= currentSpeed; dy -= currentSpeed; }
-    if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) { dx += currentSpeed; dy += currentSpeed; }
-    if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) { dx -= currentSpeed; dy += currentSpeed; }
-    if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) { dx += currentSpeed; dy -= currentSpeed; }
+    // Input Movement
+    let hasInput = false;
+    if (gameState.keys['KeyW'] || gameState.keys['ArrowUp']) { dx -= currentSpeed; dy -= currentSpeed; hasInput = true; }
+    if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) { dx += currentSpeed; dy += currentSpeed; hasInput = true; }
+    if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) { dx -= currentSpeed; dy += currentSpeed; hasInput = true; }
+    if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) { dx += currentSpeed; dy -= currentSpeed; hasInput = true; }
+
+    // Click to Move
+    if (!hasInput && gameState.targetMove) {
+        const dist = Math.hypot(gameState.targetMove.x - p.x, gameState.targetMove.y - p.y);
+        if (dist < 0.2) {
+            gameState.targetMove = null;
+        } else {
+            const ang = Math.atan2(gameState.targetMove.y - p.y, gameState.targetMove.x - p.x);
+            const step = Math.min(dist, currentSpeed);
+            dx = Math.cos(ang) * step;
+            dy = Math.sin(ang) * step;
+        }
+    }
 
     // Update Facing
     const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -308,10 +340,7 @@ function updatePhysics(dt) {
         const cy = window.innerHeight / 2;
         p.facing = Math.atan2(gameState.mousePos.y - cy, gameState.mousePos.x - cx);
     } else {
-        // Mobile: Face Movement
-        // Convert grid delta (dx, dy) to screen delta to get screen angle
-        // screenX = (dx - dy) * W
-        // screenY = (dx + dy) * H
+        // Mobile or Auto-Move
         if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
             const sx = (dx - dy);
             const sy = (dx + dy);
@@ -319,15 +348,28 @@ function updatePhysics(dt) {
         }
     }
 
-    // Collision Check (Simple bounds)
-    const newX = p.x + dx;
-    const newY = p.y + dy;
+    // Collision Check - Independent Axes for Sliding
+    // X Axis
+    let nextX = p.x + dx;
+    if (nextX > 0 && nextX < MAP_SIZE) {
+        const tX = Math.floor(nextX);
+        const tY = Math.floor(p.y);
+        if (gameState.map[tY] && gameState.map[tY][tX] === 1) {
+            p.x = nextX;
+        } else {
+            gameState.targetMove = null;
+        }
+    }
 
-    if (newX > 0 && newX < MAP_SIZE && newY > 0 && newY < MAP_SIZE) {
-        // Wall Check
-        if (gameState.map[Math.floor(newY)][Math.floor(newX)] === 1) {
-            p.x = newX;
-            p.y = newY;
+    // Y Axis
+    let nextY = p.y + dy;
+    if (nextY > 0 && nextY < MAP_SIZE) {
+        const tX = Math.floor(p.x);
+        const tY = Math.floor(nextY);
+        if (gameState.map[tY] && gameState.map[tY][tX] === 1) {
+            p.y = nextY;
+        } else {
+            gameState.targetMove = null;
         }
     }
 
