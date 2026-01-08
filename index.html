@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dungeon Realm Chronicles</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            overflow: hidden;
+            font-family: 'Press Start 2P', cursive;
+            touch-action: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* HUD */
+        #hud {
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            color: white;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        .player-stats {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border: 2px solid #555;
+            border-radius: 8px;
+        }
+
+        .bar-container {
+            width: 150px;
+            height: 10px;
+            background: #333;
+            margin-bottom: 5px;
+            border: 1px solid #fff;
+        }
+
+        .bar-fill {
+            height: 100%;
+            transition: width 0.2s;
+        }
+
+        .hp-fill { background: #e74c3c; }
+        .turbo-fill { background: #f1c40f; }
+        .xp-fill { background: #3498db; }
+
+        /* Screens */
+        .screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            color: white;
+            z-index: 100;
+        }
+
+        .hidden { display: none !important; }
+
+        .class-select-container {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .class-card {
+            background: #222;
+            border: 2px solid #444;
+            padding: 20px;
+            cursor: pointer;
+            text-align: center;
+            transition: transform 0.2s;
+            width: 140px;
+        }
+
+        .class-card:hover {
+            transform: scale(1.05);
+            border-color: #f1c40f;
+        }
+
+        .class-card img {
+            width: 64px;
+            height: 64px;
+            image-rendering: pixelated;
+        }
+
+        button {
+            background: #8e44ad;
+            color: white;
+            border: 2px solid #fff;
+            padding: 15px 30px;
+            font-family: inherit;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        button:active { background: #6c3483; }
+
+        #mobile-controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            height: 150px;
+            pointer-events: none; /* Elements inside will have events */
+        }
+
+        .action-btn {
+            pointer-events: auto;
+            position: absolute;
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            border: 2px solid white;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: white;
+            user-select: none;
+        }
+        
+        .action-btn:active { background: rgba(255,255,255,0.5); }
+
+        #btn-attack { right: 20px; bottom: 40px; background: rgba(231, 76, 60, 0.4); }
+        #btn-turbo { right: 90px; bottom: 80px; background: rgba(241, 196, 15, 0.4); }
+        #btn-magic { right: 100px; bottom: 10px; background: rgba(52, 152, 219, 0.4); }
+
+        #nipple-zone {
+            position: absolute;
+            left: 20px;
+            bottom: 20px;
+            width: 150px;
+            height: 150px;
+            pointer-events: auto;
+        }
+
+        /* Chat/Log */
+        #game-log {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            width: 300px;
+            height: 100px;
+            overflow-y: hidden;
+            font-size: 10px;
+            color: #ccc;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column-reverse;
+        }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "nipplejs": "https://esm.sh/nipplejs",
+            "three": "https://esm.sh/three" 
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        
+        <div id="ui-layer">
+            <div id="hud" class="hidden">
+                <div class="player-info">
+                    <div id="p-name">Player</div>
+                    <div id="p-level">Lvl 1</div>
+                    <div>HP: <span id="p-hp-text">100/100</span></div>
+                    <div class="bar-container"><div id="hp-bar" class="bar-fill hp-fill" style="width: 100%;"></div></div>
+                    <div>TURBO</div>
+                    <div class="bar-container"><div id="turbo-bar" class="bar-fill turbo-fill" style="width: 0%;"></div></div>
+                </div>
+                <div class="game-info">
+                    <div>WAVE <span id="wave-num">1</span></div>
+                    <div>GOLD <span id="gold-num">0</span></div>
+                </div>
+            </div>
+
+            <div id="game-log"></div>
+
+            <div id="mobile-controls" class="hidden">
+                <div id="nipple-zone"></div>
+                <div id="btn-attack" class="action-btn">ATK</div>
+                <div id="btn-turbo" class="action-btn">TRB</div>
+                <div id="btn-magic" class="action-btn">MAG</div>
+            </div>
+        </div>
+
+        <!-- Title Screen -->
+        <div id="title-screen" class="screen">
+            <img src="title_art.png" style="width: 80%; max-width: 600px; margin-bottom: 20px;">
+            <h1>CHOOSE YOUR HERO</h1>
+            <div class="class-select-container">
+                <div class="class-card" onclick="selectClass('warrior')">
+                    <img src="warrior_sprite.png">
+                    <h3>WARRIOR</h3>
+                    <p>High HP & Melee</p>
+                </div>
+                <div class="class-card" onclick="selectClass('valkyrie')">
+                    <img src="valkyrie_sprite.png">
+                    <h3>VALKYRIE</h3>
+                    <p>Balanced Spear</p>
+                </div>
+                <div class="class-card" onclick="selectClass('wizard')">
+                    <img src="wizard_sprite.png">
+                    <h3>WIZARD</h3>
+                    <p>Magic Range</p>
+                </div>
+                <div class="class-card" onclick="selectClass('archer')">
+                    <img src="archer_sprite.png">
+                    <h3>ARCHER</h3>
+                    <p>Fast Bow</p>
+                </div>
+            </div>
+            <p id="connection-status" style="margin-top: 20px; font-size: 12px; color: #aaa;">Connecting to Realm...</p>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="screen hidden">
+            <h1 style="color: red;">YOU DIED</h1>
+            <p>The dungeon claims another soul.</p>
+            <button onclick="respawn()">RESPAWN</button>
+        </div>
+    </div>
+
+    <script type="module" src="main.js"></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
